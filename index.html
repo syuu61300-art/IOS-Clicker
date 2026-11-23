@@ -1,1 +1,440 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Clicker">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>Clicker</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #1a1d24; --line: #2a2f3a; --text: #e9ecf2; --muted: #8b93a3;
+    --accent: #ff9f1c; --go: #2ec27e; --stop: #e5484d;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+    overscroll-behavior: none; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  body { position: fixed; inset: 0; overflow: hidden; }
 
+  /* ---- クリック対象エリア ---- */
+  #stage { position: absolute; inset: 0; }
+  #hud { position: absolute; top: calc(env(safe-area-inset-top) + 12px); left: 0; right: 0;
+    text-align: center; pointer-events: none; }
+  #count { font-size: 56px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+  #sub { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  #target { position: absolute; left: 50%; top: 30%; width: 170px; height: 170px;
+    transform: translate(-50%, -50%); border-radius: 50%; border: 0;
+    background: radial-gradient(circle at 35% 30%, #ffd27a, var(--accent) 60%, #c86a00);
+    box-shadow: 0 10px 40px rgba(255,159,28,.35); color: #3a2000; font-size: 22px; font-weight: 800; }
+  #target.pop { animation: pop .08s ease-out; }
+  @keyframes pop { 50% { transform: translate(-50%, -50%) scale(.94); } }
+
+  /* ---- 照準 ---- */
+  #cross { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+    border: 2px solid #fff; border-radius: 50%; pointer-events: none; z-index: 5;
+    box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
+  #cross::before, #cross::after { content: ""; position: absolute; background: #fff; }
+  #cross::before { left: 50%; top: -10px; bottom: -10px; width: 2px; margin-left: -1px; }
+  #cross::after { top: 50%; left: -10px; right: -10px; height: 2px; margin-top: -1px; }
+  #cross.running { border-color: var(--go); }
+  #cross.placing { border-color: var(--accent); animation: blink .8s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .ripple { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.8); pointer-events: none; z-index: 4; animation: rip .35s ease-out forwards; }
+  @keyframes rip { to { transform: scale(2.4); opacity: 0; } }
+
+  #placeHint { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 110px); transform: translateX(-50%);
+    background: var(--accent); color: #241400; padding: 8px 14px; border-radius: 999px; font-size: 14px;
+    font-weight: 700; z-index: 6; display: none; pointer-events: none; }
+  body.placing #placeHint { display: block; }
+
+  /* ---- 操作パネル ---- */
+  #panel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--panel);
+    border-top: 1px solid var(--line); border-radius: 18px 18px 0 0;
+    padding: 10px 16px calc(env(safe-area-inset-bottom) + 12px); transition: transform .25s; }
+  #panel.collapsed { transform: translateY(calc(100% - 86px - env(safe-area-inset-bottom))); }
+  #grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 0 auto 10px; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row + .row, .sec { margin-top: 12px; }
+  button.ui { flex: 1; height: 48px; white-space: nowrap; border-radius: 12px; border: 1px solid var(--line);
+    background: #232731; color: var(--text); font-size: 15px; font-weight: 600; }
+  #startBtn { background: var(--go); border-color: var(--go); color: #04140b; font-size: 17px; flex: 2; }
+  #startBtn.on { background: #3a1416; border-color: var(--stop); color: #fff; }
+  button.hold { position: relative; overflow: hidden; }
+  button.hold::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+    width: calc(var(--p, 0) * 100%); background: rgba(229,72,77,.55); pointer-events: none; }
+  button.hold > span { position: relative; z-index: 1; }
+  button.ui:disabled, .seg button:disabled, input:disabled { opacity: .35; }
+  #toast { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 110px); z-index: 20;
+    transform: translate(-50%, -10px); background: #2b303c; color: var(--text); padding: 10px 16px;
+    border-radius: 12px; font-size: 14px; font-weight: 600; opacity: 0; transition: .25s; pointer-events: none;
+    white-space: nowrap; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #lockMsg { display: none; color: var(--muted); font-size: 12px; text-align: center; margin-top: 8px; }
+  body.running #lockMsg { display: block; }
+  .seg { display: flex; background: #11141a; border-radius: 10px; padding: 3px; flex: 1; }
+  .seg button { flex: 1; height: 36px; border: 0; border-radius: 8px; background: transparent;
+    color: var(--muted); font-size: 14px; font-weight: 600; }
+  .seg button.sel { background: #2b303c; color: var(--text); }
+  label.l { color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; margin-bottom: 4px; }
+  label.l b { color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
+  .info { background: #11141a; border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--muted);
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; text-align: center; }
+  .info b { display: block; color: var(--text); font-size: 18px; font-variant-numeric: tabular-nums; }
+  .note { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="hud">
+      <div id="count">0</div>
+      <div id="sub">0 CPS</div>
+    </div>
+    <button id="target" type="button">TAP</button>
+  </div>
+
+  <div id="cross"></div>
+  <div id="placeHint">クリックしたい場所をタップ</div>
+  <div id="toast"></div>
+
+  <div id="panel">
+    <div id="grab"></div>
+    <div class="row">
+      <button class="ui hold" id="startBtn" type="button"><span>▶ スタート</span></button>
+      <button class="ui hold" id="resetBtn" type="button"><span>リセット</span></button>
+      <button class="ui" id="foldBtn" type="button">▼</button>
+    </div>
+
+    <div id="lockMsg">🔒 実行中は設定をロック中。停止・リセットは長押し</div>
+    <div class="sec">
+      <label class="l">クリック位置</label>
+      <div class="row">
+        <div class="seg" id="posSeg">
+          <button data-v="center" type="button">中央</button>
+          <button data-v="custom" type="button">指定場所</button>
+        </div>
+        <button class="ui" id="placeBtn" type="button" style="flex:0 0 96px">位置を設定</button>
+      </div>
+    </div>
+
+    <div class="sec">
+      <label class="l">1フレームあたりのクリック数 <b id="perFrameV">1</b></label>
+      <input type="range" id="perFrame" min="1" max="10" step="1" value="1">
+    </div>
+    <div class="sec">
+      <label class="l">何フレームごとにクリック <b id="everyV">1</b></label>
+      <input type="range" id="every" min="1" max="60" step="1" value="1">
+    </div>
+
+    <div class="sec info">
+      <div>実測fps<b id="fpsV">--</b></div>
+      <div>目標CPS<b id="cpsTargetV">--</b></div>
+      <div>実測CPS<b id="cpsV">0</b></div>
+    </div>
+    <div class="note">
+      速度 = 画面のフレームレート ×（1フレームあたりの回数）÷（何フレームごと）。<br>
+      ProMotion搭載iPhoneで120fpsにするには：設定 › アプリ › Safari › 詳細 › 機能フラグ ›
+      「Prefer Page Rendering Updates near 60fps」をオフ。<br>
+      アプリを閉じても実行状態は保持され、戻ったときに閉じていた間のクリック数が加算されます。
+      止まるのは「停止」ボタンを1秒長押ししたときだけです（リセットも長押し）。<br>
+      ※このアプリ内の画面だけをクリックします（他のアプリはタップできません）。
+    </div>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const stage = $('stage'), target = $('target'), cross = $('cross'), panel = $('panel');
+  const startBtn = $('startBtn');
+
+  // ---------- 設定（localStorageに保存） ----------
+  const defaults = { pos: 'center', x: 0.5, y: 0.3, perFrame: 1, every: 1, count: 0,
+    running: false, lastSeen: 0, rate: 0, bgHits: true };
+  let cfg = { ...defaults };
+  try { Object.assign(cfg, JSON.parse(localStorage.getItem('clicker-cfg') || '{}')); } catch (e) {}
+  const save = () => { try { localStorage.setItem('clicker-cfg', JSON.stringify(cfg)); } catch (e) {} };
+
+  let running = !!cfg.running, placing = false, justPlaced = false, frame = 0;
+  let count = cfg.count || 0;
+
+  // ---------- クリック位置 ----------
+  function point() {
+    if (cfg.pos === 'center') {
+      const r = target.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+    return { x: cfg.x * innerWidth, y: cfg.y * innerHeight };
+  }
+  function drawCross() {
+    const p = point();
+    cross.style.left = p.x + 'px';
+    cross.style.top = p.y + 'px';
+    cross.classList.toggle('running', running);
+    cross.classList.toggle('placing', placing);
+  }
+
+  // ---------- クリック処理 ----------
+  function onTargetHit() {
+    count++;
+  }
+  target.addEventListener('click', onTargetHit);
+
+  let lastRippleFrame = -1, popTimer = 0;
+  function fireAt(p) {
+    const el = document.elementFromPoint(p.x, p.y);
+    if (!el || panel.contains(el)) return false; // 操作パネルは押さない
+    if (el === target) {
+      onTargetHit();                 // 高速化のため直接カウント
+    } else {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: p.x, clientY: p.y, view: window }));
+    }
+    return true;
+  }
+  function effects(p) {
+    if (lastRippleFrame === frame) return; // 1フレーム1回まで
+    lastRippleFrame = frame;
+    if (frame % 3 === 0) {
+      const r = document.createElement('div');
+      r.className = 'ripple';
+      r.style.left = p.x + 'px'; r.style.top = p.y + 'px';
+      document.body.appendChild(r);
+      setTimeout(() => r.remove(), 360);
+    }
+    if (!popTimer) {
+      target.classList.add('pop');
+      popTimer = setTimeout(() => { target.classList.remove('pop'); popTimer = 0; }, 80);
+    }
+  }
+
+  // ---------- フレームループ（fps計測 + 自動クリック） ----------
+  const deltas = [];
+  let last = 0, fps = 60;
+  const clickTimes = [];
+
+  function loop(t) {
+    if (last) {
+      deltas.push(t - last);
+      if (deltas.length > 60) deltas.shift();
+      const avg = deltas.reduce((a, b) => a + b, 0) / deltas.length;
+      fps = 1000 / avg;
+    }
+    last = t;
+    frame++;
+
+    if (running && !document.hidden && frame % cfg.every === 0) {
+      const p = point();
+      let n = 0;
+      for (let i = 0; i < cfg.perFrame; i++) if (fireAt(p)) n++;
+      if (n) {
+        effects(p);
+        for (let i = 0; i < n; i++) clickTimes.push(t);
+      }
+    }
+    while (clickTimes.length && t - clickTimes[0] > 1000) clickTimes.shift();
+
+    if (frame % 6 === 0) render();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 表示 ----------
+  const fmt = (n) => n.toLocaleString('ja-JP');
+  function render() {
+    const cps = clickTimes.length;
+    const nominal = Math.round(fps);
+    $('count').textContent = fmt(count);
+    $('sub').textContent = `${cps} CPS`;
+    $('fpsV').textContent = nominal;
+    $('cpsTargetV').textContent = Math.round(nominal * cfg.perFrame / cfg.every * 10) / 10;
+    $('cpsV').textContent = cps;
+    drawCross();
+    if (frame % 60 === 0) persist();
+  }
+
+  function syncUI() {
+    document.querySelectorAll('#posSeg button').forEach(b => b.classList.toggle('sel', b.dataset.v === cfg.pos));
+    $('placeBtn').style.opacity = cfg.pos === 'custom' ? 1 : .4;
+    $('perFrame').value = cfg.perFrame; $('perFrameV').textContent = cfg.perFrame;
+    $('every').value = cfg.every; $('everyV').textContent = cfg.every;
+    startBtn.firstChild.textContent = running ? '■ 長押しで停止' : '▶ スタート';
+    startBtn.classList.toggle('on', running);
+    $('resetBtn').firstChild.textContent = 'リセット';
+    // 実行中は設定を触れないようにロック
+    document.querySelectorAll('#posSeg button, #placeBtn, #perFrame, #every').forEach(el => el.disabled = running);
+    document.body.classList.toggle('running', running);
+    document.body.classList.toggle('placing', placing);
+    render();
+  }
+
+  // ---------- 画面を点灯したままにする ----------
+  let wakeLock = null;
+  async function keepAwake(on) {
+    try {
+      if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+      else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch (e) {}
+  }
+
+  // ---------- 操作 ----------
+  // 長押しボタン（誤タップ防止）
+  function holdButton(btn, ms, enabled, action) {
+    let timer = 0, t0 = 0, raf = 0;
+    const cancel = () => { clearTimeout(timer); cancelAnimationFrame(raf); timer = 0; btn.style.setProperty('--p', 0); };
+    btn.addEventListener('pointerdown', (e) => {
+      if (!enabled()) return;
+      e.preventDefault();
+      t0 = performance.now();
+      const tick = () => { btn.style.setProperty('--p', Math.min(1, (performance.now() - t0) / ms)); raf = requestAnimationFrame(tick); };
+      tick();
+      timer = setTimeout(() => { cancel(); action(); btn.dataset.fired = Date.now(); }, ms);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => btn.addEventListener(ev, cancel));
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  function start() {
+    running = true; placing = false;
+    cfg.running = true; persist();
+    keepAwake(true); setCollapsed(true); syncUI();
+  }
+  function stopCompletely() {
+    running = false;
+    cfg.running = false; persist();
+    keepAwake(false); syncUI();
+    toast('完全に停止しました');
+  }
+  // スタートは普通のタップ、停止は1秒長押し
+  startBtn.addEventListener('click', () => {
+    if (Date.now() - (+startBtn.dataset.fired || 0) < 600) return;  // 長押し停止直後の離し指で再スタートしない
+    if (!running) start();
+  });
+  holdButton(startBtn, 1000, () => running, stopCompletely);
+  // リセットは常に0.8秒長押し
+  holdButton($('resetBtn'), 800, () => true, () => { count = 0; persist(); render(); toast('リセットしました'); });
+  $('foldBtn').addEventListener('click', () => {
+    setCollapsed(!panel.classList.contains('collapsed'));
+  });
+  function setCollapsed(c) {
+    panel.classList.toggle('collapsed', c);
+    $('foldBtn').textContent = c ? '▲' : '▼';
+  }
+  $('grab').addEventListener('click', () => $('foldBtn').click());
+
+  document.querySelectorAll('#posSeg button').forEach(b => b.addEventListener('click', () => {
+    cfg.pos = b.dataset.v; save();
+    if (cfg.pos === 'custom') startPlacing();
+    else placing = false;
+    syncUI();
+  }));
+  $('placeBtn').addEventListener('click', () => {
+    cfg.pos = 'custom'; save(); startPlacing(); syncUI();
+  });
+  function startPlacing() {
+    placing = true; running = false; keepAwake(false);
+    setCollapsed(true);
+  }
+
+  // 位置設定：タップした場所を記録（ドラッグで微調整可）
+  function setFromEvent(e) {
+    cfg.x = Math.min(1, Math.max(0, e.clientX / innerWidth));
+    cfg.y = Math.min(1, Math.max(0, e.clientY / innerHeight));
+    drawCross();
+  }
+  stage.addEventListener('pointerdown', (e) => {
+    if (!placing) return;
+    e.preventDefault(); e.stopPropagation();
+    setFromEvent(e);
+    const move = (ev) => setFromEvent(ev);
+    const up = () => {
+      stage.removeEventListener('pointermove', move);
+      placing = false; justPlaced = true; save(); syncUI();
+      setTimeout(() => { justPlaced = false; }, 400);
+    };
+    stage.addEventListener('pointermove', move);
+    stage.addEventListener('pointerup', up, { once: true });
+    stage.addEventListener('pointercancel', up, { once: true });
+  }, true);
+  // 位置設定中のタップはターゲットのクリックとして数えない
+  stage.addEventListener('click', (e) => {
+    if (placing || justPlaced) { e.stopPropagation(); justPlaced = false; return; }
+    // 実行中は手のタップを無視（自動クリックだけ数える）
+    if (running && e.isTrusted) e.stopPropagation();
+  }, true);
+
+  $('perFrame').addEventListener('input', (e) => { cfg.perFrame = +e.target.value; save(); syncUI(); });
+  $('every').addEventListener('input', (e) => { cfg.every = +e.target.value; save(); syncUI(); });
+
+  // ピンチ拡大を防止（ダブルタップ拡大は CSS の touch-action で無効化）
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+  addEventListener('resize', drawCross);
+
+  // ---------- 閉じている間も動き続ける ----------
+  // iOSは裏に回ったWebアプリを一時停止するため、閉じていた時間から
+  // クリック数を計算して、戻ったときにまとめて加算する。
+  function currentRate() { return Math.round(fps) * cfg.perFrame / cfg.every; }
+  function persist() {
+    cfg.count = count;
+    cfg.running = running;
+    if (running && !document.hidden) {
+      cfg.lastSeen = Date.now();
+      cfg.rate = currentRate();
+      const p = point(), el = document.elementFromPoint(p.x, p.y);
+      cfg.bgHits = el === target;   // 指定場所がボタンから外れていれば加算しない
+    }
+    save();
+  }
+  function catchUp() {
+    if (!running || !cfg.lastSeen) return;
+    const away = Date.now() - cfg.lastSeen;
+    if (away < 1500) return;                                 // 一瞬の切り替えは無視
+    if (away > 0 && away < 1000 * 60 * 60 * 24 * 30 && cfg.bgHits) {   // 時計の巻き戻り等の異常値は無視
+      const add = Math.floor(away / 1000 * cfg.rate);
+      if (add > 0) { count += add; toast(`閉じていた ${fmtTime(away)} の間に +${fmt(add)}`); }
+    }
+    cfg.lastSeen = Date.now();
+    save();
+  }
+  function fmtTime(ms) {
+    const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return h ? `${h}時間${m}分` : m ? `${m}分${s % 60}秒` : `${s}秒`;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { cfg.count = count; save(); }      // lastSeenは表示中の最終時刻のまま
+    else { catchUp(); deltas.length = 0; last = 0; if (running) keepAwake(true); syncUI(); }
+  });
+  addEventListener('pagehide', () => { cfg.count = count; save(); });
+  addEventListener('pageshow', (e) => { if (e.persisted) catchUp(); });
+
+  let toastTimer = 0;
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  }
+
+  // 起動時：前回実行中ならそのまま再開
+  if (running) {
+    catchUp(); setCollapsed(true);
+    // 画面点灯維持はタップが必要なので、最初のタッチで再取得
+    keepAwake(true);
+    document.addEventListener('pointerdown', () => { if (running) keepAwake(true); }, { once: true });
+  }
+
+  // オフライン対応
+  if ('serviceWorker' in navigator) {
+    addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+
+  syncUI();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
