@@ -1,5 +1,5 @@
 // オフラインでも起動できるようにアプリ本体をキャッシュ
-const CACHE = 'clicker-v2';
+const CACHE = 'clicker-v3';
 const FILES = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
