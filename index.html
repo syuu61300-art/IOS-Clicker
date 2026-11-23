@@ -75,7 +75,7 @@
   #toast { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 110px); z-index: 20;
     transform: translate(-50%, -10px); background: #2b303c; color: var(--text); padding: 10px 16px;
     border-radius: 12px; font-size: 14px; font-weight: 600; opacity: 0; transition: .25s; pointer-events: none;
-    white-space: nowrap; }
+    max-width: 90vw; text-align: center; }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #lockMsg { display: none; color: var(--muted); font-size: 12px; text-align: center; margin-top: 8px; }
   body.running #lockMsg { display: block; }
@@ -104,6 +104,9 @@
   <div id="cross"></div>
   <div id="placeHint">クリックしたい場所をタップ</div>
   <div id="toast"></div>
+  <canvas id="pipCanvas" width="480" height="270" style="position:absolute;left:-9999px;top:0"></canvas>
+  <video id="pipVideo" muted playsinline autopictureinpicture
+    style="position:absolute;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none"></video>
 
   <div id="panel">
     <div id="grab"></div>
@@ -113,6 +116,9 @@
       <button class="ui" id="foldBtn" type="button">▼</button>
     </div>
 
+    <div class="row">
+      <button class="ui" id="pipBtn" type="button">🪟 ミニ画面を出す（他のアプリの上に表示）</button>
+    </div>
     <div id="lockMsg">🔒 実行中は設定をロック中。停止・リセットは長押し</div>
     <div class="sec">
       <label class="l">クリック位置</label>
@@ -145,6 +151,7 @@
       「Prefer Page Rendering Updates near 60fps」をオフ。<br>
       アプリを閉じても実行状態は保持され、戻ったときに閉じていた間のクリック数が加算されます。
       止まるのは「停止」ボタンを1秒長押ししたときだけです（リセットも長押し）。<br>
+      「ミニ画面」は他のアプリの上に浮かぶ表示です（カウントと状態の確認用。ミニ画面からはタップできません）。<br>
       ※このアプリ内の画面だけをクリックします（他のアプリはタップできません）。
     </div>
   </div>
@@ -407,7 +414,7 @@
     return h ? `${h}時間${m}分` : m ? `${m}分${s % 60}秒` : `${s}秒`;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { cfg.count = count; save(); }      // lastSeenは表示中の最終時刻のまま
+    if (document.hidden) { cfg.count = count; save(); if (pipOn) drawPip(); }      // lastSeenは表示中の最終時刻のまま
     else { catchUp(); deltas.length = 0; last = 0; if (running) keepAwake(true); syncUI(); }
   });
   addEventListener('pagehide', () => { cfg.count = count; save(); });
@@ -418,6 +425,57 @@
     const t = $('toast'); t.textContent = msg; t.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
   }
+
+  // ---------- ミニ画面（ピクチャ・イン・ピクチャ） ----------
+  // キャンバスに状態を描いて動画にし、iOSのPiPで他のアプリの上に浮かべる。
+  const pc = $('pipCanvas'), pctx = pc.getContext('2d'), pv = $('pipVideo');
+  let pipStream = null, pipOn = false;
+  function liveCount() {
+    // 裏にいる間は経過時間から推定した数を表示（戻ったときの加算と同じ計算）
+    if (running && document.hidden && cfg.bgHits && cfg.lastSeen) {
+      const away = Date.now() - cfg.lastSeen;
+      if (away > 0) return count + Math.floor(away / 1000 * cfg.rate);
+    }
+    return count;
+  }
+  function drawPip() {
+    const W = pc.width, H = pc.height;
+    pctx.fillStyle = '#0f1115'; pctx.fillRect(0, 0, W, H);
+    pctx.fillStyle = running ? '#2ec27e' : '#8b93a3';
+    pctx.beginPath(); pctx.arc(36, 36, 12, 0, Math.PI * 2); pctx.fill();
+    pctx.font = '600 26px -apple-system, sans-serif'; pctx.textBaseline = 'middle';
+    pctx.fillText(running ? '実行中' : '停止中', 58, 37);
+    pctx.fillStyle = '#e9ecf2'; pctx.textAlign = 'center';
+    pctx.font = '800 96px -apple-system, sans-serif';
+    pctx.fillText(fmt(liveCount()), W / 2, H / 2 + 14);
+    pctx.fillStyle = '#8b93a3'; pctx.font = '600 24px -apple-system, sans-serif';
+    const rate = running ? (document.hidden ? cfg.rate : clickTimes.length) : 0;
+    pctx.fillText(`${rate} CPS ・ ${cfg.pos === 'center' ? '中央' : '指定場所'}`, W / 2, H - 34);
+    pctx.textAlign = 'left';
+  }
+  setInterval(() => { if (pipOn) drawPip(); }, 250);
+
+  async function openPip() {
+    try {
+      drawPip();
+      if (!pipStream) { pipStream = pc.captureStream(10); pv.srcObject = pipStream; }
+      await pv.play();
+      if (document.pictureInPictureEnabled && pv.requestPictureInPicture) await pv.requestPictureInPicture();
+      else if (pv.webkitSupportsPresentationMode && pv.webkitSupportsPresentationMode('picture-in-picture')) pv.webkitSetPresentationMode('picture-in-picture');
+      else throw new Error('unsupported');
+      pipOn = true; setCollapsed(true); pipLabel();
+      toast('ミニ画面を出しました。ホームに戻っても浮かんだままです');
+    } catch (e) {
+      toast('この端末ではミニ画面を出せませんでした');
+    }
+  }
+  function pipLabel() { $('pipBtn').textContent = pipOn ? '🪟 ミニ画面を閉じる' : '🪟 ミニ画面を出す（他のアプリの上に表示）'; }
+  function pipClosed() { pipOn = false; pipLabel(); }
+  pv.addEventListener('leavepictureinpicture', pipClosed);
+  pv.addEventListener('webkitpresentationmodechanged', () => { if (pv.webkitPresentationMode !== 'picture-in-picture') pipClosed(); });
+  // ミニ画面の一時停止ボタンでは止めない（誤作動防止）。停止はアプリ内の長押しだけ
+  pv.addEventListener('pause', () => { if (pipOn) pv.play().catch(() => {}); });
+  $('pipBtn').addEventListener('click', () => { pipOn ? (document.exitPictureInPicture ? document.exitPictureInPicture().catch(() => {}) : pv.webkitSetPresentationMode('inline')) : openPip(); });
 
   // 起動時：前回実行中ならそのまま再開
   if (running) {
