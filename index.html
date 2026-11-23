@@ -455,18 +455,30 @@
   }
   setInterval(() => { if (pipOn) drawPip(); }, 250);
 
+  const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  // 先に動画を再生しておく（ボタンを押した瞬間にPiPを要求できるように）
+  function prepPip() {
+    try {
+      if (!pipStream && pc.captureStream) { drawPip(); pipStream = pc.captureStream(10); pv.srcObject = pipStream; }
+      pv.play().catch(() => {});
+    } catch (e) {}
+  }
+  if (!isStandalone) document.addEventListener('pointerdown', prepPip, { once: true });
   async function openPip() {
+    if (isStandalone) {
+      toast('ホーム画面アプリではiOSの制限でミニ画面を出せません。Safariのタブで開いてください');
+      return;
+    }
     try {
       drawPip();
-      if (!pipStream) { pipStream = pc.captureStream(10); pv.srcObject = pipStream; }
-      await pv.play();
+      prepPip();
       if (document.pictureInPictureEnabled && pv.requestPictureInPicture) await pv.requestPictureInPicture();
       else if (pv.webkitSupportsPresentationMode && pv.webkitSupportsPresentationMode('picture-in-picture')) pv.webkitSetPresentationMode('picture-in-picture');
       else throw new Error('unsupported');
       pipOn = true; setCollapsed(true); pipLabel();
       toast('ミニ画面を出しました。ホームに戻っても浮かんだままです');
     } catch (e) {
-      toast('この端末ではミニ画面を出せませんでした');
+      toast('ミニ画面を出せませんでした（' + (e && (e.name || e.message) || '不明') + '）');
     }
   }
   function pipLabel() { $('pipBtn').textContent = pipOn ? '🪟 ミニ画面を閉じる' : '🪟 ミニ画面を出す（他のアプリの上に表示）'; }
